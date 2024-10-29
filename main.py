@@ -2,6 +2,7 @@ import  requests
 import pandas as pd
 from bs4 import BeautifulSoup
 from lxml import etree
+from lxml import html
 import os
 import time
 import json
@@ -54,6 +55,9 @@ for page in range(1,6):
                 response_link = requests.get(product_link)
                 if response_link.status_code == 200:
                     soup = BeautifulSoup(response_link.text, 'html.parser')
+
+                    # Parsear o HTML
+                    tree = html.fromstring(response_link.content)
                     
                     # Extraindo informações do produto
                     product_name = soup.select_one('#wrapper > main > div.product-section > div.product-wrap.-container > div.product-infos > div > div > h1').get_text(strip=True)
@@ -109,12 +113,75 @@ for page in range(1,6):
                     # Usar o operador ternário para atribuir o texto se o elemento for encontrado
                     product_line = element.get_text(strip=True) if element else "any"
 
+                    text_node = tree.xpath('//*[@id="hidden-content"]/div/p[2]/text()[1]')
 
-                    print(product_line)
-
+                    # Preencher a variável de `product_composition` caso exista o text_node
+                    if text_node:
+                        product_composition = text_node[0].strip()
+                    else:
+                        product_composition = 'Texto não encontrado'
                     
+                    # Extrair o valor promocional
+                    promo_value = float(soup.select_one('div.wrapper-price > ins').get_text(strip=True).replace("R$ ", "").replace(".", "").replace(",","."))
+
+                    # Selecionar os contêineres que contêm as tags de produto
+                    product_tags_containers = soup.select('div.product-tags')
+
+                    # Inicializar uma lista para armazenar todas as tags
+                    all_tags = []
+
+                    for container in product_tags_containers:
+                        # Encontrar todos os elementos <span> dentro do contêiner atual
+                        spans = container.find_all('span')
+
+                        # Extrair o texto de cada <span> e adicionar à lista global
+                        all_tags.extend([span.text.strip() for span in spans])
+                    
+                    # Juntar todos os textos em uma string, separados por vírgula
+                    product_tags = ', '.join(all_tags)
+
+                    # Tentar encontrar o elemento
+                    element = soup.select_one("input#Tamanho-attribute-1")
+
+                    # Usar o operador ternário para atribuir o texto se o elemento for encontrado
+                    product_content = element['value'] if element else "any"
+
+                    element = soup.select_one("#hidden-content > div > p:nth-child(1)")
+                    product_active = element.get_text(strip=True).replace("Ingredientes ativos:", "") if element else ''
 
 
+                    # Salvar informações do produto
+                    data["Nome do Produto"].append(product_name)
+                    data["REF"].append(product_ref)
+                    data["Linha"].append(product_line)
+                    data["Valor"].append(product_price)
+                    data["Descrição Geral"].append(product_description)
+                    data["Código de Barras"].append(product_ean) 
+                    data["Modo de Uso"].append(product_mode)
+                    data["Composição"].append(product_composition)
+                    data["Link do Produto"].append(product_link)
+                    data["Valor promocional"].append(promo_value)
+                    data["Tags"].append(product_tags)
+                    data["Conteúdo da Embalagen"].append(product_content)
+                    data["Ingredientes Ativos"].append(product_active)
+
+                    # Diretório específico para imagens do produto
+                    product_image_directory = os.path.join(image_directory, product_name_sanitized)
+                    os.makedirs(product_image_directory, exist_ok=True)
+
+                    # Extraindo e salvando imagens
+                    images = soup.select(image_selector)
+                    image_urls = [img.get("srcset") for img in images if img.get('srcset')]
+
+                    for i, img_url in enumerate(image_urls, start=1):
+                        img_response = requests.get(img_url)
+                        if img_response.status_code == 200:
+                            img_path = os.path.join(product_image_directory, f"{product_name_sanitized}_{i}.jpg")
+                            with open(img_path, "wb") as f:
+                                f.write(img_response.content)
+                            print(f"Imagem {product_name_sanitized}_{i} salva em {img_path}")
+                        else:
+                            print(f"Erro ao baixar a imagem {img_url}")
 
                 else:
                     print(f"Erro ao carregar a página do link: Status {response_link.status_code}")
@@ -122,6 +189,12 @@ for page in range(1,6):
             else:
                 print("Link não encontrado em um dos produtos")
     
-    
+        # time.sleep(1) # Pausa entre cada requisição para evitar sobrecarga no servidor
     else:
         print(f"Erro ao acessar a página {page}: Status {response.status_code}")
+        
+# Criando DataFrame e salvando em CSV
+df = pd.DataFrame(data)
+os.makedirs(data_directory,exist_ok=True)
+df.to_csv(os.path.join(data_directory, "Produtos_da_Keune.csv"), index=False, sep=";", encoding='utf-8-sig')
+print("Arquivo CSV criado com sucesso!")
